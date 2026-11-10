@@ -12,6 +12,8 @@ import type {
 
 import { NitroDefaults } from "./defaults";
 
+const defineNitroConfig = (config: NitroConfig) => config;
+
 // Resolvers
 import { resolveAssetsOptions } from "./resolvers/assets";
 import {
@@ -67,7 +69,7 @@ async function _loadUserConfig(
   configOverrides = klona(configOverrides);
 
   // @ts-ignore
-  globalThis.defineNitroConfig = globalThis.defineNitroConfig || ((c) => c);
+  globalThis.defineNitroConfig ||= defineNitroConfig;
 
   // Compatibility date
   let compatibilityDate: CompatibilityDateSpec | undefined =
