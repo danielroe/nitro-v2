@@ -475,27 +475,39 @@ function normalizeRoutes(routes: string[]) {
 // Input is a rou3/radix3 compatible route pattern
 // Output is a PCRE-compatible regular expression that matches each incoming pathname
 // Reference: https://github.com/h3js/rou3/blob/main/src/regexp.ts
-function normalizeRouteSrc(route: string): string {
+export function normalizeRouteSrc(route: string): string {
   let idCtr = 0;
   return route
     .split("/")
-    .map((segment) => {
+    .map((segment, index) => {
+      if (index === 0) {
+        return segment;
+      }
+      const prefix = "/";
       if (segment.startsWith("**")) {
         return segment === "**"
-          ? "(?:.*)"
-          : `?(?<${namedGroup(segment.slice(3))}>.+)`;
+          ? prefix + "(?:.*)"
+          : prefix + `?(?<${namedGroup(segment.slice(3))}>.+)`;
       }
       if (segment === "*") {
-        return `(?<_${idCtr++}>[^/]*)`;
+        return prefix + `(?<_${idCtr++}>[^/]*)`;
+      }
+      const catchAll = segment.match(/^:(\w+)\(\.\*\)\??$/);
+      if (catchAll) {
+        return `(?:${prefix}(?<${namedGroup(catchAll[1])}>.*))?`;
       }
       if (segment.includes(":")) {
-        return segment
+        const body = segment
           .replace(/:(\w+)/g, (_, id) => `(?<${namedGroup(id)}>[^/]+)`)
           .replace(/\./g, String.raw`\.`);
+        if (/^:\w+\?$/.test(segment)) {
+          return `(?:${prefix}${body.slice(0, -1)})?`;
+        }
+        return prefix + body;
       }
-      return segment;
+      return prefix + segment;
     })
-    .join("/");
+    .join("");
 }
 
 /**
