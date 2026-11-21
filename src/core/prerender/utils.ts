@@ -65,7 +65,12 @@ export async function extractLinks(
   }
   for (const link of links) {
     // Keyed by the decoded route
-    const decodedLink = decodeURI(link);
+    let decodedLink: string;
+    try {
+      decodedLink = decodeURI(link);
+    } catch {
+      continue;
+    }
     const _parents = linkParents.get(decodedLink);
     if (_parents) {
       _parents.add(from);

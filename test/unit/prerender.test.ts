@@ -186,4 +186,37 @@ describe("prerender", () => {
       await rm(encodedRootDir, { recursive: true, force: true });
     }
   });
+
+  it("does not abort on links that fail to decode", async () => {
+    const headerRootDir = await mkdtemp(
+      join(tmpdir(), "nitro-prerender-header-")
+    );
+    await mkdir(join(headerRootDir, "routes"), { recursive: true });
+    await writeFile(
+      join(headerRootDir, "routes/header.ts"),
+      `import { appendHeader } from "h3";
+export default defineEventHandler((event) => {
+  appendHeader(event, "x-nitro-prerender", "/ignored%25");
+  return "<!DOCTYPE html><html><body></body></html>";
+});\n`
+    );
+    const nitro = await createNitro({
+      rootDir: headerRootDir,
+      preset: "static",
+      logLevel: 0,
+      prerender: { crawlLinks: false, routes: ["/header"] },
+    });
+    const routed: string[] = [];
+    nitro.hooks.hook("prerender:route", (route) => {
+      routed.push(route.route);
+    });
+    try {
+      await prepare(nitro);
+      await prerender(nitro);
+      expect(routed).toContain("/header");
+    } finally {
+      await nitro.close();
+      await rm(headerRootDir, { recursive: true, force: true });
+    }
+  });
 });
