@@ -64,11 +64,13 @@ export async function extractLinks(
     links.push(_link.pathname + _link.search);
   }
   for (const link of links) {
-    const _parents = linkParents.get(link);
+    // Keyed by the decoded route
+    const decodedLink = decodeURI(link);
+    const _parents = linkParents.get(decodedLink);
     if (_parents) {
       _parents.add(from);
     } else {
-      linkParents.set(link, new Set([from]));
+      linkParents.set(decodedLink, new Set([from]));
     }
   }
   return links;

@@ -150,4 +150,40 @@ describe("prerender", () => {
       await rm(secondRootDir, { recursive: true, force: true });
     }
   });
+
+  it("tracks linking pages for encoded routes", async () => {
+    const encodedRootDir = await mkdtemp(
+      join(tmpdir(), "nitro-prerender-encoded-")
+    );
+    await mkdir(join(encodedRootDir, "routes"), { recursive: true });
+    await writeFile(
+      join(encodedRootDir, "routes/links.ts"),
+      `export default defineEventHandler(() => \`<!DOCTYPE html><html><body><a href="/caf%C3%A9">café</a></body></html>\`);\n`
+    );
+    const nitro = await createNitro({
+      rootDir: encodedRootDir,
+      preset: "static",
+      logLevel: 0,
+      prerender: { crawlLinks: true, routes: ["/links"] },
+    });
+    const failedRoutes: { route: string; linkedFrom?: string[] }[] = [];
+    nitro.hooks.hook("prerender:done", (ctx) => {
+      for (const route of ctx.failedRoutes) {
+        failedRoutes.push({
+          route: route.route,
+          linkedFrom: route.linkedFrom,
+        });
+      }
+    });
+    try {
+      await prepare(nitro);
+      await prerender(nitro);
+      expect(
+        failedRoutes.find((route) => route.route === "/café")?.linkedFrom
+      ).toEqual(["/links"]);
+    } finally {
+      await nitro.close();
+      await rm(encodedRootDir, { recursive: true, force: true });
+    }
+  });
 });
