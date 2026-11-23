@@ -42,6 +42,26 @@ async function startDevServer(name: string, drain?: DevServerOptions["drain"]) {
   };
 }
 
+/** Polls `url` until `done` returns true for a response, or fails after `timeout` ms. */
+async function fetchUntil(
+  url: string,
+  done: (response: Response) => boolean,
+  timeout = 10_000
+) {
+  const deadline = Date.now() + timeout;
+  while (true) {
+    const response = await fetch(url);
+    if (done(response)) {
+      return response;
+    }
+    await response.body?.cancel();
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for ${url}`);
+    }
+    await delay(50);
+  }
+}
+
 async function getWorkerState(base: string, path: string) {
   const response = await fetch(base + path);
   expect(response.status).toBe(200);
@@ -168,10 +188,14 @@ describe("nitro:dev:worker-reload", () => {
     const first = await startDevServer("crash-first");
     const second = await startDevServer("crash-second");
     try {
-      await fetch(first.base + "exit");
-      await delay(1000);
+      // `second` reloaded last, so the shared worker id counter is ahead of `first`
+      expect((await fetch(first.base + "exit")).status).toBe(200);
 
-      const response = await fetch(first.base + "state");
+      // The worker exits shortly after responding; wait until it stops serving
+      const response = await fetchUntil(
+        first.base + "state",
+        (response) => response.status !== 200
+      );
       expect(response.status).toBe(500);
       expect(await response.text()).toContain("worker exited with code 1");
     } finally {
