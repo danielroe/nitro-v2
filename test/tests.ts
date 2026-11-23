@@ -398,6 +398,22 @@ export function testNitro(
     expect(headers["cache-control"]).toBe("s-maxage=60");
   });
 
+  it("handles route rules - headers cache-control not sent on errors", async () => {
+    const unauthorized = await callHandler({ url: "/rules/headers-error" });
+    expect(unauthorized.status).toBe(401);
+    expect(unauthorized.headers["cache-control"]).toBe("no-cache");
+
+    const unhandled = await callHandler({
+      url: "/rules/headers-error?unhandled",
+    });
+    expect(unhandled.status).toBe(500);
+    expect(unhandled.headers["cache-control"]).toBe("no-cache");
+
+    const own = await callHandler({ url: "/rules/headers-error?own" });
+    expect(own.status).toBe(401);
+    expect(own.headers["cache-control"]).toBe("private, max-age=10");
+  });
+
   it("handles route rules - cors", async () => {
     const expectedHeaders = {
       "access-control-allow-origin": "*",

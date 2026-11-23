@@ -148,6 +148,13 @@ describe("nitro:preset:vercel", async () => {
               {
                 "continue": true,
                 "headers": {
+                  "Cache-Control": "public, max-age=60",
+                },
+                "src": "^/rules/headers-error/?$",
+              },
+              {
+                "continue": true,
+                "headers": {
                   "cache-control": "s-maxage=60",
                 },
                 "src": "^/rules/headers/?$",
@@ -276,6 +283,10 @@ describe("nitro:preset:vercel", async () => {
               {
                 "dest": "/static-flags",
                 "src": "/static-flags",
+              },
+              {
+                "dest": "/rules/headers-error",
+                "src": "/rules/headers-error",
               },
               {
                 "dest": "/route-group",
@@ -805,6 +816,7 @@ describe("nitro:preset:vercel", async () => {
             "functions/rules/_/cached/[...]-isr.prerender-config.json",
             "functions/rules/_/noncached/cached-isr.func (symlink)",
             "functions/rules/_/noncached/cached-isr.prerender-config.json",
+            "functions/rules/headers-error.func (symlink)",
             "functions/rules/isr-ttl/[...]-isr.func (symlink)",
             "functions/rules/isr-ttl/[...]-isr.prerender-config.json",
             "functions/rules/isr/[...]-isr.func (symlink)",

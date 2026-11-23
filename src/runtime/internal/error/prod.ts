@@ -2,12 +2,15 @@ import {
   type H3Error,
   type H3Event,
   getRequestURL,
-  getResponseHeader,
   send,
   setResponseHeaders,
   setResponseStatus,
 } from "h3";
-import { defineNitroErrorHandler, type InternalHandlerResponse } from "./utils";
+import {
+  defineNitroErrorHandler,
+  shouldDisableErrorCache,
+  type InternalHandlerResponse,
+} from "./utils";
 
 export default defineNitroErrorHandler(
   function defaultNitroErrorHandler(error, event) {
@@ -62,7 +65,7 @@ export function defaultHandler(
     "content-security-policy": "script-src 'none'; frame-ancestors 'none';",
   };
   setResponseStatus(event, statusCode, statusMessage);
-  if (statusCode === 404 || !getResponseHeader(event, "cache-control")) {
+  if (shouldDisableErrorCache(event, statusCode)) {
     headers["cache-control"] = "no-cache";
   }
 

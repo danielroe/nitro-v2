@@ -85,6 +85,8 @@ describe("nitro:preset:netlify-legacy", async () => {
         expect(headers).toMatchInlineSnapshot(`
           "/rules/headers
             cache-control: s-maxage=60
+          /rules/headers-error
+            Cache-Control: public, max-age=60
           /rules/cors
             access-control-allow-origin: *
             access-control-allow-methods: GET

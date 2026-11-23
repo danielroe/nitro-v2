@@ -3,6 +3,7 @@ import {
   type H3Event,
   createError,
   eventHandler,
+  getResponseHeader,
   proxyRequest,
   sendRedirect,
   setHeaders,
@@ -58,6 +59,17 @@ export function createRouteRulesHandler(ctx: {
     // Apply headers options
     if (routeRules.headers) {
       setHeaders(event, routeRules.headers);
+      // Remember the rule's cache-control so error responses do not inherit it
+      if (
+        Object.keys(routeRules.headers).some(
+          (name) => name.toLowerCase() === "cache-control"
+        )
+      ) {
+        event.context._nitro.routeRulesCacheControl = getResponseHeader(
+          event,
+          "cache-control"
+        );
+      }
     }
     // Apply redirect options
     if (routeRules.redirect) {
