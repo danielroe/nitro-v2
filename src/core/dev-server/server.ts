@@ -6,6 +6,7 @@ import type { App, NodeMiddleware } from "h3";
 import type { Listener, ListenOptions } from "listhen";
 import { NodeDevWorker, type DevWorker, type WorkerAddress } from "./worker";
 import type {
+  DevServerOptions,
   Nitro,
   NitroBuildInfo,
   NitroDevServer,
@@ -47,6 +48,15 @@ export function createDevServer(nitro: Nitro): NitroDevServer {
   };
 }
 
+function getDrainTimeout(drain: DevServerOptions["drain"]) {
+  if (!drain) {
+    return;
+  }
+  return typeof drain === "object" && drain.timeout !== undefined
+    ? drain.timeout
+    : 60_000;
+}
+
 function lazyNodeMiddleware(load: () => Promise<NodeMiddleware>) {
   let middlewarePromise: Promise<NodeMiddleware> | undefined;
   return eventHandler(async (event) => {
@@ -69,6 +79,7 @@ class DevServer {
   wsProxies: { route: string; proxy: HTTPProxy }[] = [];
 
   workerError?: unknown;
+  currentWorkerId?: number;
 
   building?: boolean = true; /* assume initial build will start soon */
   buildError?: unknown;
@@ -99,7 +110,8 @@ class DevServer {
     nitro.hooks.hook("dev:error", (cause: unknown) => {
       this.buildError = cause;
       this.building = false;
-      for (const worker of this.workers) {
+      const workers = [...this.workers];
+      for (const worker of workers) {
         worker.close();
       }
     });
@@ -130,7 +142,7 @@ class DevServer {
         Promise.all(this.listeners.map((l) => l.close())).then(() => {
           this.listeners = [];
         }),
-        Promise.all(this.workers.map((w) => w.close())).then(() => {
+        Promise.all([...this.workers].map((w) => w.close())).then(() => {
           this.workers = [];
         }),
         Promise.resolve(this.watcher?.close()).then(() => {
@@ -145,12 +157,23 @@ class DevServer {
   }
 
   reload() {
-    for (const worker of this.workers) {
-      worker.close();
+    const drainTimeout = getDrainTimeout(this.nitro.options.devServer.drain);
+    const workers = [...this.workers];
+    for (const worker of workers) {
+      if (drainTimeout === undefined) {
+        worker.close();
+      } else {
+        worker.drain(drainTimeout);
+      }
     }
-    const worker = new NodeDevWorker(++workerIdCtr, this.workerDir, {
+    this.workerError = undefined;
+    const id = ++workerIdCtr;
+    this.currentWorkerId = id;
+    const worker = new NodeDevWorker(id, this.workerDir, {
       onClose: (worker, cause) => {
-        this.workerError = cause;
+        if (id === this.currentWorkerId) {
+          this.workerError = cause;
+        }
         const index = this.workers.indexOf(worker);
         if (index !== -1) {
           this.workers.splice(index, 1);
@@ -169,7 +192,10 @@ class DevServer {
     let retry = 0;
     const maxRetries = isTest || isCI ? 100 : 10;
     while (this.building || ++retry < maxRetries) {
-      if ((this.workers.length === 0 || this.buildError) && !this.building) {
+      if (
+        (this.workers.length === 0 || this.buildError || this.workerError) &&
+        !this.building
+      ) {
         return;
       }
       const activeWorker = this.workers.find((w) => w.ready);

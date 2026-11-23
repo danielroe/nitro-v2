@@ -21,6 +21,7 @@ export interface DevWorker {
   readonly ready: boolean;
   readonly closed: boolean;
   close(): Promise<void>;
+  drain(timeout: number): Promise<void>;
   handleEvent: (event: H3Event) => Promise<void>;
   handleUpgrade: (
     req: IncomingMessage,
@@ -39,6 +40,10 @@ export class NodeDevWorker implements DevWorker {
   #proxy?: HTTPProxy;
   #worker?: Worker & { _exitCode?: number };
 
+  #draining = false;
+  #inflight = 0;
+  #onIdle?: () => void;
+
   constructor(id: number, workerDir: string, hooks: WorkerHooks = {}) {
     this.#id = id;
     this.#workerDir = workerDir;
@@ -49,7 +54,11 @@ export class NodeDevWorker implements DevWorker {
 
   get ready() {
     return Boolean(
-      !this.closed && this.#address && this.#proxy && this.#worker
+      !this.closed &&
+      !this.#draining &&
+      this.#address &&
+      this.#proxy &&
+      this.#worker
     );
   }
 
@@ -60,12 +69,20 @@ export class NodeDevWorker implements DevWorker {
         statusText: "Dev worker is unavailable",
       });
     }
-    await this.#proxy.handleEvent(event, { target: this.#address });
+    const settle = this.#track();
+    try {
+      await this.#proxy.handleEvent(event, { target: this.#address });
+    } finally {
+      settle();
+    }
   }
 
   handleUpgrade(req: IncomingMessage, socket: Socket, head: any) {
     if (!this.ready) {
       return;
+    }
+    if (!socket.destroyed) {
+      socket.once("close", this.#track());
     }
     return this.#proxy!.proxy.ws(
       req,
@@ -109,11 +126,40 @@ export class NodeDevWorker implements DevWorker {
     this.#worker = worker;
   }
 
+  async drain(timeout: number) {
+    if (this.closed || this.#draining) {
+      return;
+    }
+    this.#draining = true;
+    if (this.#inflight > 0) {
+      await new Promise<void>((resolve) => {
+        const timer = Number.isFinite(timeout)
+          ? setTimeout(resolve, Math.max(0, timeout))
+          : undefined;
+        this.#onIdle = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+    }
+    await this.close();
+  }
+
+  #track() {
+    this.#inflight++;
+    return () => {
+      if (--this.#inflight === 0) {
+        this.#onIdle?.();
+      }
+    };
+  }
+
   async close(cause?: unknown) {
     if (this.closed) {
       return;
     }
     this.closed = true;
+    this.#onIdle?.();
     this.#hooks.onClose?.(this, cause);
     this.#hooks = {};
     const onError = (error: unknown) => consola.error(error);
