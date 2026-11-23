@@ -1,10 +1,12 @@
 import "#nitro-internal-pollyfills";
-import { useNitroApp } from "nitropack/runtime";
+import { useNitroApp, useRuntimeConfig } from "nitropack/runtime";
 import {
   getRouteRulesForPath,
+  isRouteRuleDisabled,
   joinHeaders,
   normalizeCookieHeader,
 } from "nitropack/runtime/internal";
+import { withoutBase } from "ufo";
 
 const nitroApp = useNitroApp();
 
@@ -53,9 +55,12 @@ function normalizeResponseHeaders(headers: NitroResponseHeaders): Headers {
   return outgoingHeaders;
 }
 
-function getCacheHeaders(url: string): Record<string, string> {
-  const { isr } = getRouteRulesForPath(url);
-  if (isr) {
+function getCacheHeaders(pathname: string): Record<string, string> {
+  // Route rules are relative to the baseURL, as in `getRouteRules`
+  const path = withoutBase(pathname, useRuntimeConfig().app.baseURL);
+  const { isr } = getRouteRulesForPath(path);
+  // A nested `isr: false` rule also covers other spellings of the path
+  if (isr && !isRouteRuleDisabled(path, "isr")) {
     const maxAge = typeof isr === "number" ? isr : ONE_YEAR_IN_SECONDS;
     const revalidateDirective =
       typeof isr === "number"

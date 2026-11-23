@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getPathReadings,
   isPathInScope,
   isTargetInScope,
   normalizeRedirectPath,
@@ -360,5 +361,32 @@ describe("resolveRedirectTarget", () => {
         "/base?a=1"
       );
     });
+  });
+});
+
+// Paths a catch-all handler may render as the same page, so a nested
+// `cache: false` rule also covers other spellings of an excluded path.
+describe("getPathReadings", () => {
+  it("includes the path itself", () => {
+    expect(getPathReadings("/account/profile")).toEqual(["/account/profile"]);
+  });
+
+  it("includes decoded and normalized readings", () => {
+    for (const path of [
+      "/account%2Fprofile",
+      "/account%2fprofile",
+      "//account/profile",
+      "/account//profile",
+      "/x/..%2Faccount%2Fprofile",
+      "/x/../account/profile",
+      "/account%252Fprofile",
+      "/account\\profile",
+    ]) {
+      expect(getPathReadings(path), path).toContain("/account/profile");
+    }
+  });
+
+  it("includes `undefined` for paths that cannot be read safely", () => {
+    expect(getPathReadings("/%" + "25".repeat(10) + "2f")).toContain(undefined);
   });
 });
