@@ -100,7 +100,7 @@ class DevServer {
       this.buildError = cause;
       this.building = false;
       for (const worker of this.workers) {
-        worker.close();
+        worker.close(undefined, { drain: true });
       }
     });
 
@@ -145,8 +145,9 @@ class DevServer {
   }
 
   reload() {
+    // Requests already in flight on the previous worker may finish there
     for (const worker of this.workers) {
-      worker.close();
+      worker.close(undefined, { drain: true });
     }
     const worker = new NodeDevWorker(++workerIdCtr, this.workerDir, {
       onClose: (worker, cause) => {

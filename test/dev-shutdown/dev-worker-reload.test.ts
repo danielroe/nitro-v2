@@ -69,13 +69,56 @@ describe("nitro:dev:worker-reload", () => {
       await getWorkerState(base, "state");
       const hang = fetch(base + "hang");
       await delay(300);
+      const reloadedAt = Date.now();
       devServer.reload();
 
       const response = await hang;
+      const elapsed = Date.now() - reloadedAt;
       expect(response.status).toBe(503);
+      // Cut by the 1s shutdown timeout, not right away and not by the 5s handler
+      expect(elapsed).toBeGreaterThanOrEqual(900);
+      expect(elapsed).toBeLessThan(4000);
     } finally {
       delete process.env.NITRO_SHUTDOWN_TIMEOUT;
       await close();
     }
+  }, 30_000);
+
+  it("does not keep a replaced worker alive for event streams", async () => {
+    const { devServer, base, close } = await startDevServer("stream");
+    try {
+      const response = await fetch(base + "stream");
+      expect(response.status).toBe(200);
+      const ended = (async () => {
+        const reader = response.body!.getReader();
+        try {
+          while (!(await reader.read()).done) {
+            // Consume events until the stream ends
+          }
+        } catch {
+          // Cut connection
+        }
+      })();
+      await delay(300);
+      const reloadedAt = Date.now();
+      devServer.reload();
+
+      await ended;
+      expect(Date.now() - reloadedAt).toBeLessThan(2000);
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
+  it("does not wait for in-flight requests when the dev server closes", async () => {
+    const { base, close } = await startDevServer("close");
+    await getWorkerState(base, "state");
+    const hang = fetch(base + "hang").catch(() => undefined);
+    await delay(300);
+
+    const closingAt = Date.now();
+    await close();
+    expect(Date.now() - closingAt).toBeLessThan(2000);
+    await hang;
   }, 30_000);
 });

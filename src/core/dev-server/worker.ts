@@ -17,10 +17,18 @@ export interface WorkerHooks {
   onReady?: (worker: DevWorker, address?: WorkerAddress) => void;
 }
 
+export interface WorkerCloseOptions {
+  /**
+   * Let requests that are in flight on the worker finish (up to
+   * `NITRO_SHUTDOWN_TIMEOUT`) before it is terminated.
+   */
+  drain?: boolean;
+}
+
 export interface DevWorker {
   readonly ready: boolean;
   readonly closed: boolean;
-  close(): Promise<void>;
+  close(cause?: unknown, opts?: WorkerCloseOptions): Promise<void>;
   handleEvent: (event: H3Event) => Promise<void>;
   handleUpgrade: (
     req: IncomingMessage,
@@ -38,7 +46,7 @@ export class NodeDevWorker implements DevWorker {
   #address?: WorkerAddress;
   #proxy?: HTTPProxy;
   #worker?: Worker & { _exitCode?: number };
-  #inflight = new Set<Promise<void>>();
+  #inflight = new Map<Promise<void>, H3Event>();
 
   constructor(id: number, workerDir: string, hooks: WorkerHooks = {}) {
     this.#id = id;
@@ -62,7 +70,7 @@ export class NodeDevWorker implements DevWorker {
       });
     }
     const request = this.#proxy.handleEvent(event, { target: this.#address });
-    this.#inflight.add(request);
+    this.#inflight.set(request, event);
     try {
       await request;
     } finally {
@@ -116,7 +124,7 @@ export class NodeDevWorker implements DevWorker {
     this.#worker = worker;
   }
 
-  async close(cause?: unknown) {
+  async close(cause?: unknown, opts: WorkerCloseOptions = {}) {
     if (this.closed) {
       return;
     }
@@ -124,28 +132,35 @@ export class NodeDevWorker implements DevWorker {
     this.#hooks.onClose?.(this, cause);
     this.#hooks = {};
     const onError = (error: unknown) => consola.error(error);
-    await this.#drainRequests().catch(onError);
+    if (opts.drain) {
+      await this.#drainRequests().catch(onError);
+    }
     await this.#closeWorker().catch(onError);
     await this.#closeProxy().catch(onError);
     await this.#closeSocket().catch(onError);
   }
 
   async #drainRequests() {
-    if (this.#inflight.size === 0) {
+    // Event streams never finish on their own, and clients reconnect them to
+    // the new worker, so they are not worth waiting for.
+    const requests = [...this.#inflight]
+      .filter(([, event]) => !isEventStream(event))
+      .map(([request]) => request);
+    if (requests.length === 0) {
       return;
     }
-    const timeoutSec =
-      Number.parseInt(process.env.NITRO_SHUTDOWN_TIMEOUT || "", 10) || 5;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
-      Promise.allSettled(this.#inflight),
+      Promise.allSettled(requests),
       new Promise<void>((resolve) => {
         timeout = setTimeout(() => {
-          consola.warn(
-            `force closing dev worker with ${this.#inflight.size} request(s) in flight`
-          );
+          if (process.env.DEBUG) {
+            consola.warn(
+              `force closing dev worker with ${this.#inflight.size} request(s) in flight`
+            );
+          }
           resolve();
-        }, timeoutSec * 1000);
+        }, getShutdownTimeout());
       }),
     ]);
     clearTimeout(timeout);
@@ -178,14 +193,12 @@ export class NodeDevWorker implements DevWorker {
 
     if (!this.#worker._exitCode && !isTest && !isCI) {
       await new Promise<void>((resolve) => {
-        const gracefulShutdownTimeoutSec =
-          Number.parseInt(process.env.NITRO_SHUTDOWN_TIMEOUT || "", 10) || 5;
         const timeout = setTimeout(() => {
           if (process.env.DEBUG) {
             consola.warn(`force closing dev worker...`);
           }
           resolve();
-        }, gracefulShutdownTimeoutSec * 1000);
+        }, getShutdownTimeout());
 
         this.#worker?.on("message", (message) => {
           if (message.event === "exit") {
@@ -207,4 +220,16 @@ export class NodeDevWorker implements DevWorker {
     const status = this.closed ? "closed" : this.ready ? "ready" : "pending";
     return `NodeDevWorker#${this.#id}(${status})`;
   }
+}
+
+/** Graceful shutdown timeout in milliseconds (`NITRO_SHUTDOWN_TIMEOUT` is in seconds). */
+function getShutdownTimeout() {
+  const seconds =
+    Number.parseInt(process.env.NITRO_SHUTDOWN_TIMEOUT || "", 10) || 5;
+  return seconds * 1000;
+}
+
+function isEventStream(event: H3Event) {
+  const contentType = event.node.res.getHeader("content-type");
+  return String(contentType || "").includes("text/event-stream");
 }
