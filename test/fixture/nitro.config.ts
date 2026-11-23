@@ -86,6 +86,9 @@ export default defineNitroConfig({
     "/api/param/prerender4": { prerender: true },
     "/api/param/prerender2": { prerender: false },
     "/rules/headers": { headers: { "cache-control": "s-maxage=60" } },
+    "/rules/headers-error": {
+      headers: { "Cache-Control": "public, max-age=60" },
+    },
     "/rules/cors": {
       cors: true,
       headers: { "access-control-allow-methods": "GET" },

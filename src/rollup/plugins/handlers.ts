@@ -1,9 +1,5 @@
 import { runtimeDir } from "nitropack/runtime/meta";
-import type {
-  Nitro,
-  NitroEventHandler,
-  NitroRouteRules,
-} from "nitropack/types";
+import type { Nitro, NitroEventHandler } from "nitropack/types";
 import { hash } from "ohash";
 import { join } from "pathe";
 import { virtual } from "./virtual";
@@ -48,9 +44,6 @@ export function handlers(nitro: Nitro) {
             handler: nitro.options.renderer,
           });
         }
-
-        // If this handler would render a cached route rule then we can also inject a cached event handler
-        extendMiddlewareWithRuleOverlaps(handlers, nitro.options.routeRules);
 
         // Imports take priority
         const imports = unique(
@@ -123,51 +116,4 @@ function unique(arr: any[]) {
 
 function getImportId(p: string, lazy?: boolean) {
   return (lazy ? "_lazy_" : "_") + hash(p).replace(/-/g, "").slice(0, 6);
-}
-
-const WILDCARD_PATH_RE = /\/\*\*.*$/;
-
-function extendMiddlewareWithRuleOverlaps(
-  handlers: NitroEventHandler[],
-  routeRules: Record<string, NitroRouteRules>
-) {
-  const rules = Object.entries(routeRules);
-  for (const [path, rule] of rules) {
-    // We can ignore this rule if it is not cached and it isn't nested in a cached route
-    if (!rule.cache) {
-      // If we are nested 'within' a cached route, we want to inject a non-cached event handler
-      const isNested = rules.some(
-        ([p, r]) =>
-          r.cache &&
-          WILDCARD_PATH_RE.test(p) &&
-          path.startsWith(p.replace(WILDCARD_PATH_RE, ""))
-      );
-      if (!isNested) {
-        continue;
-      }
-    }
-    for (const [index, handler] of handlers.entries()) {
-      // Skip middleware
-      if (!handler.route || handler.middleware) {
-        continue;
-      }
-      // We will correctly register this rule as a cached route anyway
-      if (handler.route === path) {
-        break;
-      }
-      // We are looking for handlers that will render a route _despite_ not
-      // having an identical path to it
-      if (!WILDCARD_PATH_RE.test(handler.route)) {
-        continue;
-      }
-      if (!path.startsWith(handler.route.replace(WILDCARD_PATH_RE, ""))) {
-        continue;
-      }
-      handlers.splice(index, 0, {
-        ...handler,
-        route: path,
-      });
-      break;
-    }
-  }
 }

@@ -5,7 +5,6 @@ import {
   getRequestHeader,
   getRequestHeaders,
   getRequestURL,
-  getResponseHeader,
   setResponseHeaders,
   setResponseStatus,
 } from "h3";
@@ -15,7 +14,11 @@ import consola from "consola";
 import { ErrorParser } from "youch-core";
 import { Youch } from "youch";
 import { SourceMapConsumer } from "source-map";
-import { defineNitroErrorHandler, type InternalHandlerResponse } from "./utils";
+import {
+  defineNitroErrorHandler,
+  shouldDisableErrorCache,
+  type InternalHandlerResponse,
+} from "./utils";
 
 export default defineNitroErrorHandler(
   async function defaultNitroErrorHandler(error, event) {
@@ -95,7 +98,7 @@ export async function defaultHandler(
     "content-security-policy":
       "script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self';",
   };
-  if (statusCode === 404 || !getResponseHeader(event, "cache-control")) {
+  if (shouldDisableErrorCache(event, statusCode)) {
     headers["cache-control"] = "no-cache";
   }
 

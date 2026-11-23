@@ -21,13 +21,13 @@ describe("nitro:preset:node-listener", async () => {
 
   it("should handle nested cached route rules", async () => {
     const cached = await ctx.fetch("/rules/_/noncached/cached");
-    expect(cached.headers.get("etag")).toBeDefined();
+    expect(cached.headers.get("etag")).not.toBeNull();
 
     const noncached = await ctx.fetch("/rules/_/noncached/noncached");
     expect(noncached.headers.get("etag")).toBeNull();
 
     const cached2 = await ctx.fetch("/rules/_/cached/cached");
-    expect(cached2.headers.get("etag")).toBeDefined();
+    expect(cached2.headers.get("etag")).not.toBeNull();
 
     const noncached2 = await ctx.fetch("/rules/_/cached/noncached");
     expect(noncached2.headers.get("etag")).toBeNull();

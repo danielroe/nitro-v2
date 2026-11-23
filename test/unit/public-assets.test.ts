@@ -1,6 +1,8 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, resolve } from "pathe";
-import { describe, expect, it } from "vitest";
+import { dirname, join, resolve } from "pathe";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Nitro } from "nitropack/types";
 import { publicAssets } from "../../src/rollup/plugins/public-assets";
 
@@ -73,5 +75,48 @@ describe("virtual/public-assets node reader", () => {
     );
 
     await expect(readAsset("/index.html")).rejects.toThrow("EACCES");
+  });
+});
+
+describe("virtual/public-assets-data", () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    // The `nitro-dev` preset uses the same dir for server output and public
+    // output, so it holds the previous dev build on rebuilds.
+    dir = await mkdtemp(join(tmpdir(), "nitro-public-assets-"));
+    await writeFile(join(dir, "index.mjs"), `const secret = "s3cret";`);
+    await writeFile(join(dir, "index.mjs.map"), "{}");
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function manifest(dev: boolean) {
+    const vfs: Record<string, any> = {};
+    publicAssets({
+      options: {
+        dev,
+        serveStatic: true,
+        publicAssets: [],
+        output: { publicDir: dir, serverDir: dir },
+      },
+      vfs,
+    } as unknown as Nitro);
+    const code: string =
+      await vfs["#nitro-internal-virtual/public-assets-data"]();
+    return JSON.parse(code.replace(/^export default /, "").replace(/;$/, ""));
+  }
+
+  it("does not expose the dev server build as public assets", async () => {
+    expect(await manifest(true)).toEqual({});
+  });
+
+  it("lists files of the public output dir in production", async () => {
+    expect(Object.keys(await manifest(false)).sort()).toEqual([
+      "/index.mjs",
+      "/index.mjs.map",
+    ]);
   });
 });

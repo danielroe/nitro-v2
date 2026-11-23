@@ -60,6 +60,14 @@ const READINGS: Array<(pathname: string) => string | undefined> = [
   },
 ];
 
+// Every path a handler may resolve `pathname` to: the path itself and its
+// canonical readings (see `READINGS`). Handlers that serve many paths
+// (catch-all routes, server-side renderers) can render the same page for all
+// of them. Contains `undefined` if a reading cannot be computed safely.
+export function getPathReadings(pathname: string): Array<string | undefined> {
+  return [...new Set([pathname, ...READINGS.map((read) => read(pathname))])];
+}
+
 // Check whether `pathname`, after canonicalization, stays within `base`.
 // Prevents match/forward differentials where an encoded traversal like `..%2f`
 // bypasses the `/**` scope at match time but escapes the base once the

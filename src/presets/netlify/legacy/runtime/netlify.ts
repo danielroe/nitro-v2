@@ -1,18 +1,21 @@
 import "#nitro-internal-pollyfills";
 import type { Handler } from "@netlify/functions";
-import { getRouteRulesForPath } from "nitropack/runtime/internal";
-import { withQuery } from "ufo";
+import { useRuntimeConfig } from "nitropack/runtime";
+import {
+  getRouteRulesForPath,
+  isRouteRuleDisabled,
+} from "nitropack/runtime/internal";
+import { withoutBase } from "ufo";
 import { lambda } from "./netlify-lambda";
 
 export const handler: Handler = async function handler(event, context) {
-  const query = {
-    ...event.queryStringParameters,
-    ...event.multiValueQueryStringParameters,
-  };
-  const url = withQuery(event.path, query);
-  const routeRules = getRouteRulesForPath(url);
+  // Route rules are matched against the path only (without base URL or
+  // query), as in `getRouteRules`
+  const path = withoutBase(event.path, useRuntimeConfig().app.baseURL);
+  const routeRules = getRouteRulesForPath(path);
 
-  if (routeRules.isr) {
+  // A nested `isr: false` rule also covers other spellings of the path
+  if (routeRules.isr && !isRouteRuleDisabled(path, "isr")) {
     const builder = await import("@netlify/functions").then(
       (r) => r.builder || (r as any).default.builder
     );

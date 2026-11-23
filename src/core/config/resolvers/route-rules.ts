@@ -70,8 +70,12 @@ export function normalizeRouteRules(
         routeRules.cache.maxAge = routeConfig.swr;
       }
     }
-    // Cache: false
-    if (routeConfig.cache === false) {
+    // Cache: false (`swr: false` without cache options disables caching too,
+    // so it overrides a cached parent rule)
+    if (
+      routeConfig.cache === false ||
+      (routeConfig.swr === false && !routeConfig.cache)
+    ) {
       routeRules.cache = false;
     }
     normalizedRules[path] = routeRules;

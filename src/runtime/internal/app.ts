@@ -1,5 +1,6 @@
 import destr from "destr";
 import {
+  type EventHandler,
   type H3Error,
   type H3Event,
   createApp,
@@ -27,7 +28,7 @@ import {
 import { cachedEventHandler } from "./cache";
 import { useRuntimeConfig } from "./config";
 import { nitroAsyncContext } from "./context";
-import { createRouteRulesHandler, getRouteRulesForPath } from "./route-rules";
+import { createRouteRulesHandler, getRouteCacheRule } from "./route-rules";
 import { normalizeFetchResponse } from "./utils";
 
 // IMPORTANT: virtuals and user code should be imported last to avoid initialization order issues
@@ -161,6 +162,10 @@ function createNitroApp(): NitroApp {
   // Register route rule handlers
   h3App.use(createRouteRulesHandler({ localFetch }));
 
+  const hasCacheRules = Object.values(config.nitro.routeRules || {}).some(
+    (rule) => rule.cache
+  );
+
   for (const h of handlers) {
     let handler = h.lazy ? lazyEventHandler(h.handler) : h.handler;
     if (h.middleware || !h.route) {
@@ -170,14 +175,8 @@ function createNitroApp(): NitroApp {
       );
       h3App.use(middlewareBase, handler);
     } else {
-      const routeRules = getRouteRulesForPath(
-        h.route.replace(/:\w+|\*\*/g, "_")
-      );
-      if (routeRules.cache) {
-        handler = cachedEventHandler(handler, {
-          group: "nitro/routes",
-          ...routeRules.cache,
-        });
+      if (hasCacheRules) {
+        handler = withRouteRulesCache(handler);
       }
       router.use(h.route, handler, h.method);
     }
@@ -204,6 +203,41 @@ function createNitroApp(): NitroApp {
   };
 
   return app;
+}
+
+// Apply the `cache` route rule of each request to a route handler.
+//
+// The rule is resolved per request (not once per handler route), since a
+// handler can serve paths with different rules: a catch-all or dynamic route
+// under a cached `/**` rule may also serve paths excluded by a nested
+// `cache: false` rule.
+function withRouteRulesCache(handler: EventHandler): EventHandler {
+  // One cached handler per distinct `cache` rule
+  const cachedHandlers = new Map<string, EventHandler>();
+  const _handler = eventHandler((event) => {
+    const cacheRule = getRouteCacheRule(event);
+    if (!cacheRule) {
+      return handler(event);
+    }
+    const key = JSON.stringify(cacheRule);
+    let cachedHandler = cachedHandlers.get(key);
+    if (!cachedHandler) {
+      cachedHandler = cachedEventHandler(handler, {
+        group: "nitro/routes",
+        ...cacheRule,
+      });
+      cachedHandlers.set(key, cachedHandler);
+    }
+    return cachedHandler(event);
+  });
+  // Keep (lazy) handler resolution working, e.g. for websocket hooks
+  if (handler.__resolve__) {
+    _handler.__resolve__ = handler.__resolve__;
+  }
+  if (handler.__websocket__) {
+    _handler.__websocket__ = handler.__websocket__;
+  }
+  return _handler;
 }
 
 function runNitroPlugins(nitroApp: NitroApp) {

@@ -27,6 +27,15 @@ export function publicAssets(nitro: Nitro): Plugin {
       // #nitro-internal-virtual/public-assets-data
       "#nitro-internal-virtual/public-assets-data": async () => {
         const assets: Record<string, PublicAsset> = {};
+
+        // In development, public assets are served from their source dirs by the
+        // dev server. The dev output dir only holds the server build itself
+        // (`index.mjs` + source map, with inlined runtime config), which must
+        // never be exposed as a public asset.
+        if (nitro.options.dev) {
+          return `export default ${JSON.stringify(assets)};`;
+        }
+
         const files = await globby("**", {
           cwd: nitro.options.output.publicDir,
           absolute: false,
