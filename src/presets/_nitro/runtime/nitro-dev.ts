@@ -106,17 +106,22 @@ function listen(
 ) {
   return new Promise<void>((resolve, reject) => {
     try {
-      listener = server.listen(useRandomPort ? 0 : getSocketAddress(), () => {
+      const onListen = () => {
         const address = server.address();
         parentPort?.postMessage({
           event: "listen",
           address:
             typeof address === "string"
               ? { socketPath: address }
-              : { host: "localhost", port: address?.port },
+              : { host: "127.0.0.1", port: address?.port },
         });
         resolve();
-      });
+      };
+      // The TCP fallback binds loopback only: the worker is reached through the
+      // dev server, and must not be exposed to the network on its own port.
+      listener = useRandomPort
+        ? server.listen(0, "127.0.0.1", onListen)
+        : server.listen(getSocketAddress(), onListen);
     } catch (error) {
       reject(error);
     }
