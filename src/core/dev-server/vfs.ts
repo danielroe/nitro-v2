@@ -1,25 +1,11 @@
-import { createError, eventHandler, getRequestHeader, getRequestIP } from "h3";
+import { createError, eventHandler, getRequestHeader } from "h3";
 import type { Nitro } from "nitropack/types";
+import { isLocalDevRequest } from "./_request";
 
 export function createVFSHandler(nitro: Nitro) {
   return eventHandler(async (event) => {
-    const { socket } = event.node.req;
-    // prettier-ignore
-    const isUnixSocket =
-      // No network addresses
-      (!socket?.remoteAddress && !socket?.localAddress) &&
-      // Empty address object
-      Object.keys(socket?.address?.() || {}).length === 0 &&
-      // Socket is readable/writable but has no port info
-      socket?.readable && socket?.writable && !socket?.remotePort;
-
-    const ip = getRequestIP(event, { xForwardedFor: isUnixSocket });
-    const isLocalRequest = ip && /^::1$|^127\.\d+\.\d+\.\d+$/.test(ip);
-    if (!isLocalRequest) {
-      throw createError({
-        message: `Forbidden IP: "${ip || "?"}"`,
-        statusCode: 403,
-      });
+    if (!isLocalDevRequest(event)) {
+      throw createError({ message: "Forbidden", statusCode: 403 });
     }
 
     const vfsEntries = {
@@ -192,7 +178,7 @@ const editorTemplate = (options: Record<string, any>) => `
     require(['vs/editor/editor.main'], function () {
       monaco.editor.create(document.getElementById('editor'), ${JSON.stringify(
         options
-      )})
+      ).replaceAll("<", String.raw`\u003c`)})
     })
   }, 0);
 </script>
