@@ -17,18 +17,11 @@ export interface WorkerHooks {
   onReady?: (worker: DevWorker, address?: WorkerAddress) => void;
 }
 
-export interface WorkerCloseOptions {
-  /**
-   * Let requests that are in flight on the worker finish (up to
-   * `NITRO_SHUTDOWN_TIMEOUT`) before it is terminated.
-   */
-  drain?: boolean;
-}
-
 export interface DevWorker {
   readonly ready: boolean;
   readonly closed: boolean;
-  close(cause?: unknown, opts?: WorkerCloseOptions): Promise<void>;
+  close(): Promise<void>;
+  drain(timeout: number): Promise<void>;
   handleEvent: (event: H3Event) => Promise<void>;
   handleUpgrade: (
     req: IncomingMessage,
@@ -46,7 +39,10 @@ export class NodeDevWorker implements DevWorker {
   #address?: WorkerAddress;
   #proxy?: HTTPProxy;
   #worker?: Worker & { _exitCode?: number };
-  #inflight = new Map<Promise<void>, H3Event>();
+
+  #draining = false;
+  #inflight = 0;
+  #onIdle?: () => void;
 
   constructor(id: number, workerDir: string, hooks: WorkerHooks = {}) {
     this.#id = id;
@@ -58,29 +54,35 @@ export class NodeDevWorker implements DevWorker {
 
   get ready() {
     return Boolean(
-      !this.closed && this.#address && this.#proxy && this.#worker
+      !this.closed &&
+      !this.#draining &&
+      this.#address &&
+      this.#proxy &&
+      this.#worker
     );
   }
 
   async handleEvent(event: H3Event) {
-    if (!this.ready || !this.#address || !this.#proxy) {
+    if (!this.#address || !this.#proxy) {
       throw createError({
         status: 503,
         statusText: "Dev worker is unavailable",
       });
     }
-    const request = this.#proxy.handleEvent(event, { target: this.#address });
-    this.#inflight.set(request, event);
+    const settle = this.#track();
     try {
-      await request;
+      await this.#proxy.handleEvent(event, { target: this.#address });
     } finally {
-      this.#inflight.delete(request);
+      settle();
     }
   }
 
   handleUpgrade(req: IncomingMessage, socket: Socket, head: any) {
     if (!this.ready) {
       return;
+    }
+    if (!socket.destroyed) {
+      socket.once("close", this.#track());
     }
     return this.#proxy!.proxy.ws(
       req,
@@ -124,46 +126,46 @@ export class NodeDevWorker implements DevWorker {
     this.#worker = worker;
   }
 
-  async close(cause?: unknown, opts: WorkerCloseOptions = {}) {
+  async drain(timeout: number) {
+    if (this.closed || this.#draining) {
+      return;
+    }
+    this.#draining = true;
+    if (this.#inflight > 0) {
+      await new Promise<void>((resolve) => {
+        const timer = Number.isFinite(timeout)
+          ? setTimeout(resolve, Math.max(0, timeout))
+          : undefined;
+        this.#onIdle = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+    }
+    await this.close();
+  }
+
+  #track() {
+    this.#inflight++;
+    return () => {
+      if (--this.#inflight === 0) {
+        this.#onIdle?.();
+      }
+    };
+  }
+
+  async close(cause?: unknown) {
     if (this.closed) {
       return;
     }
     this.closed = true;
+    this.#onIdle?.();
     this.#hooks.onClose?.(this, cause);
     this.#hooks = {};
     const onError = (error: unknown) => consola.error(error);
-    if (opts.drain) {
-      await this.#drainRequests().catch(onError);
-    }
     await this.#closeWorker().catch(onError);
     await this.#closeProxy().catch(onError);
     await this.#closeSocket().catch(onError);
-  }
-
-  async #drainRequests() {
-    // Event streams never finish on their own, and clients reconnect them to
-    // the new worker, so they are not worth waiting for.
-    const requests = [...this.#inflight]
-      .filter(([, event]) => !isEventStream(event))
-      .map(([request]) => request);
-    if (requests.length === 0) {
-      return;
-    }
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      Promise.allSettled(requests),
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(() => {
-          if (process.env.DEBUG) {
-            consola.warn(
-              `force closing dev worker with ${this.#inflight.size} request(s) in flight`
-            );
-          }
-          resolve();
-        }, getShutdownTimeout());
-      }),
-    ]);
-    clearTimeout(timeout);
   }
 
   async #closeProxy() {
@@ -193,12 +195,14 @@ export class NodeDevWorker implements DevWorker {
 
     if (!this.#worker._exitCode && !isTest && !isCI) {
       await new Promise<void>((resolve) => {
+        const gracefulShutdownTimeoutSec =
+          Number.parseInt(process.env.NITRO_SHUTDOWN_TIMEOUT || "", 10) || 5;
         const timeout = setTimeout(() => {
           if (process.env.DEBUG) {
             consola.warn(`force closing dev worker...`);
           }
           resolve();
-        }, getShutdownTimeout());
+        }, gracefulShutdownTimeoutSec * 1000);
 
         this.#worker?.on("message", (message) => {
           if (message.event === "exit") {
@@ -220,16 +224,4 @@ export class NodeDevWorker implements DevWorker {
     const status = this.closed ? "closed" : this.ready ? "ready" : "pending";
     return `NodeDevWorker#${this.#id}(${status})`;
   }
-}
-
-/** Graceful shutdown timeout in milliseconds (`NITRO_SHUTDOWN_TIMEOUT` is in seconds). */
-function getShutdownTimeout() {
-  const seconds =
-    Number.parseInt(process.env.NITRO_SHUTDOWN_TIMEOUT || "", 10) || 5;
-  return seconds * 1000;
-}
-
-function isEventStream(event: H3Event) {
-  const contentType = event.node.res.getHeader("content-type");
-  return String(contentType || "").includes("text/event-stream");
 }

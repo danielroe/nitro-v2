@@ -7,6 +7,16 @@ import type { ListenOptions, Listener } from "listhen";
 
 export interface DevServerOptions {
   watch: string[];
+  /**
+   * Let the previous dev worker finish the requests and WebSockets it already
+   * accepted on reloads, and close it once they settle (or after `timeout` ms,
+   * default `60_000`).
+   *
+   * New requests go to the new worker.
+   *
+   * @default false
+   */
+  drain?: boolean | { timeout?: number };
 }
 
 export interface NitroWorker {
