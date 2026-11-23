@@ -164,6 +164,22 @@ describe("nitro:dev:worker-reload", () => {
     }
   }, 30_000);
 
+  it("reports a crashed worker while another dev server runs in the same process", async () => {
+    const first = await startDevServer("crash-first");
+    const second = await startDevServer("crash-second");
+    try {
+      await fetch(first.base + "exit");
+      await delay(1000);
+
+      const response = await fetch(first.base + "state");
+      expect(response.status).toBe(500);
+      expect(await response.text()).toContain("worker exited with code 1");
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  }, 30_000);
+
   it("does not wait for draining workers when the dev server closes", async () => {
     const { devServer, base, close } = await startDevServer("close", true);
     await getWorkerState(base, "state");

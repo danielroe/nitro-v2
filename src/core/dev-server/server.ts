@@ -79,6 +79,7 @@ class DevServer {
   wsProxies: { route: string; proxy: HTTPProxy }[] = [];
 
   workerError?: unknown;
+  currentWorkerId?: number;
 
   building?: boolean = true; /* assume initial build will start soon */
   buildError?: unknown;
@@ -167,9 +168,10 @@ class DevServer {
     }
     this.workerError = undefined;
     const id = ++workerIdCtr;
+    this.currentWorkerId = id;
     const worker = new NodeDevWorker(id, this.workerDir, {
       onClose: (worker, cause) => {
-        if (id === workerIdCtr) {
+        if (id === this.currentWorkerId) {
           this.workerError = cause;
         }
         const index = this.workers.indexOf(worker);
